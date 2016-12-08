@@ -102,6 +102,26 @@ class Frame(object):
             if hasattr(self, checker.name):
                 other._setattr(checker.name, getattr(self, checker.name))
 
+    def _merge_frame(self, other):
+        # default impl, use the new tag over the old one
+        return other
+
+    def _upgrade_frame(self):
+        """Returns either this instance or a new instance if this is a v2.2
+        frame and an upgrade to a v2.3/4 equivalent is viable.
+
+        If this is a v2.2 instance and there is no upgrade path, returns None.
+        """
+
+        # turn 2.2 into 2.3/2.4 tags
+        if len(type(self).__name__) == 3:
+            base = type(self).__base__
+            if base is Frame:
+                return
+            return base(self)
+        else:
+            return self
+
     def _get_v23_frame(self, **kwargs):
         """Returns a frame copy which is suitable for writing into a v2.3 tag.
 
@@ -408,6 +428,13 @@ class TextFrame(Frame):
         """Extend the list by appending all strings from the given list."""
 
         return self.text.extend(value)
+
+    def _merge_frame(self, other):
+        # merge in new values
+        for val in other[:]:
+            if val not in self:
+                self.append(val)
+        return self
 
     def _pprint(self):
         return " / ".join(self.text)
@@ -983,7 +1010,7 @@ class SYTC(Frame):
 
     _framespec = [
         ByteSpec("format", default=1),
-        BinaryDataSpec("data", default=b""),
+        BinaryDataSpec("data"),
     ]
 
     def __eq__(self, other):
@@ -1219,6 +1246,10 @@ class APIC(Frame):
     def HashKey(self):
         return '%s:%s' % (self.FrameID, self.desc)
 
+    def _merge_frame(self, other):
+        other.desc += u" "
+        return other
+
     def _pprint(self):
         type_desc = text_type(self.type)
         if hasattr(self.type, "_pprint"):
@@ -1391,9 +1422,6 @@ class AENC(Frame):
         Latin1TextSpec('owner'),
         SizedIntegerSpec('preview_start', size=2, default=0),
         SizedIntegerSpec('preview_length', size=2, default=0),
-    ]
-
-    _optionalspec = [
         BinaryDataSpec('data'),
     ]
 
@@ -1426,23 +1454,16 @@ class LINK(Frame):
     _framespec = [
         FrameIDSpec('frameid', length=4),
         Latin1TextSpec('url'),
+        BinaryDataSpec('data'),
     ]
-
-    _optionalspec = [BinaryDataSpec('data')]
 
     @property
     def HashKey(self):
-        try:
-            return "%s:%s:%s:%s" % (
-                self.FrameID, self.frameid, self.url, _bytes2key(self.data))
-        except AttributeError:
-            return "%s:%s:%s" % (self.FrameID, self.frameid, self.url)
+        return "%s:%s:%s:%s" % (
+            self.FrameID, self.frameid, self.url, _bytes2key(self.data))
 
     def __eq__(self, other):
-        try:
-            return (self.frameid, self.url, self.data) == other
-        except AttributeError:
-            return (self.frameid, self.url) == other
+        return (self.frameid, self.url, self.data) == other
 
     __hash__ = Frame.__hash__
 
@@ -1481,7 +1502,7 @@ class UFID(Frame):
 
     _framespec = [
         Latin1TextSpec('owner'),
-        BinaryDataSpec('data', default=b""),
+        BinaryDataSpec('data'),
     ]
 
     @property
@@ -1598,7 +1619,7 @@ class ENCR(Frame):
     _framespec = [
         Latin1TextSpec('owner'),
         ByteSpec('method', default=0x80),
-        BinaryDataSpec('data', default=b""),
+        BinaryDataSpec('data'),
     ]
 
     @property
@@ -1621,9 +1642,8 @@ class GRID(Frame):
     _framespec = [
         Latin1TextSpec('owner'),
         ByteSpec('group', default=0x80),
+        BinaryDataSpec('data'),
     ]
-
-    _optionalspec = [BinaryDataSpec('data')]
 
     @property
     def HashKey(self):
@@ -2050,10 +2070,7 @@ class LNK(LINK):
 
     _framespec = [
         FrameIDSpec('frameid', length=3),
-        Latin1TextSpec('url')
-    ]
-
-    _optionalspec = [
+        Latin1TextSpec('url'),
         BinaryDataSpec('data'),
     ]
 
@@ -2073,8 +2090,7 @@ class LNK(LINK):
         other._setattr("frameid", new_frameid)
 
         other.url = self.url
-        if hasattr(self, "data"):
-            other.data = self.data
+        other.data = self.data
 
 
 Frames = {}

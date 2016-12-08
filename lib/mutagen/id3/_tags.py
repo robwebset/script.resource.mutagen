@@ -179,7 +179,7 @@ class ID3Tags(DictProxy, Tags):
         frames, unknown_frames, data = read_frames(
             header, data, header.known_frames)
         for frame in frames:
-            self.add(frame)
+            self._add(frame, False)
         self.unknown_frames = unknown_frames
         self._unknown_v2_version = header.version[1]
         return data
@@ -273,19 +273,60 @@ class ID3Tags(DictProxy, Tags):
         frames = sorted(Frame.pprint(s) for s in self.values())
         return "\n".join(frames)
 
+    def _add(self, frame, strict):
+        """Add a frame.
+
+        Args:
+            frame (Frame): the frame to add
+            strict (bool): if this should raise in case it can't be added
+                and frames shouldn't be merged.
+        """
+
+        if not isinstance(frame, Frame):
+            raise TypeError("%r not a Frame instance" % frame)
+
+        orig_frame = frame
+        frame = frame._upgrade_frame()
+        if frame is None:
+            if not strict:
+                return
+            raise TypeError(
+                "Can't upgrade %r frame" % type(orig_frame).__name__)
+
+        hash_key = frame.HashKey
+        if strict or hash_key not in self:
+            self[hash_key] = frame
+            return
+
+        # Try to merge frames, or change the new one. Since changing
+        # the new one can lead to new conflicts, try until everything is
+        # either merged or added.
+        while True:
+            old_frame = self[hash_key]
+            new_frame = old_frame._merge_frame(frame)
+            new_hash = new_frame.HashKey
+            if new_hash == hash_key:
+                self[hash_key] = new_frame
+                break
+            else:
+                assert new_frame is frame
+                if new_hash not in self:
+                    self[new_hash] = new_frame
+                    break
+                hash_key = new_hash
+
     def loaded_frame(self, tag):
         """Deprecated; use the add method."""
-        # turn 2.2 into 2.3/2.4 tags
-        if len(type(tag).__name__) == 3:
-            tag = type(tag).__base__(tag)
-        self[tag.HashKey] = tag
 
-    # add = loaded_frame (and vice versa) break applications that
-    # expect to be able to override loaded_frame (e.g. Quod Libet),
-    # as does making loaded_frame call add.
+        self._add(tag, True)
+
     def add(self, frame):
         """Add a frame to the tag."""
-        return self.loaded_frame(frame)
+
+        # add = loaded_frame (and vice versa) break applications that
+        # expect to be able to override loaded_frame (e.g. Quod Libet),
+        # as does making loaded_frame call add.
+        self.loaded_frame(frame)
 
     def __setitem__(self, key, tag):
         if not isinstance(tag, Frame):
