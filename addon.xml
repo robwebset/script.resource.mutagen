@@ -17,6 +17,7 @@
 		<news>Available from the robwebset and URepo repositories</news>
 		<assets>
 			<icon>icon.png</icon>
+			<fanart>fanart.jpg</fanart>
 			<banner>resources/banner.jpg</banner>
 			<logo>resources/logo.png</logo>
 		</assets>
