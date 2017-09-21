@@ -3,14 +3,15 @@
 # Copyright 2016  Christoph Reiter
 #
 # This program is free software; you can redistribute it and/or modify
-# it under the terms of version 2 of the GNU General Public License as
-# published by the Free Software Foundation.
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
 
 import struct
 
 from mutagen._tags import Tags
 from mutagen._util import DictProxy, convert_error, read_full
-from mutagen._compat import PY3, text_type
+from mutagen._compat import PY3, text_type, itervalues
 
 from ._util import BitPaddedInt, unsynch, ID3JunkFrameError, \
     ID3EncryptionUnsupportedError, is_valid_frame_id, error, \
@@ -185,15 +186,24 @@ class ID3Tags(DictProxy, Tags):
         return data
 
     def _write(self, config):
-        # Sort frames by 'importance'
+        # Sort frames by 'importance', then reverse frame size and then frame
+        # hash to get a stable result
         order = ["TIT2", "TPE1", "TRCK", "TALB", "TPOS", "TDRC", "TCON"]
-        order = dict((b, a) for a, b in enumerate(order))
-        last = len(order)
-        frames = sorted(self.items(),
-                        key=lambda a: (order.get(a[0][:4], last), a[0]))
 
-        framedata = [save_frame(frame, config=config)
-                     for (key, frame) in frames]
+        framedata = [
+            (f, save_frame(f, config=config)) for f in itervalues(self)]
+
+        def get_prio(frame):
+            try:
+                return order.index(frame.FrameID)
+            except ValueError:
+                return len(order)
+
+        def sort_key(items):
+            frame, data = items
+            return (get_prio(frame), len(data), frame.HashKey)
+
+        framedata = [d for (f, d) in sorted(framedata, key=sort_key)]
 
         # only write unknown frames if they were loaded from the version
         # we are saving with. Theoretically we could upgrade frames
@@ -468,6 +478,25 @@ class ID3Tags(DictProxy, Tags):
             f.sub_frames.update_to_v23()
         for f in self.getall("CTOC"):
             f.sub_frames.update_to_v23()
+
+    def _copy(self):
+        """Creates a shallow copy of all tags"""
+
+        items = self.items()
+        subs = {}
+        for f in (self.getall("CHAP") + self.getall("CTOC")):
+            subs[f.HashKey] = f.sub_frames._copy()
+        return (items, subs)
+
+    def _restore(self, value):
+        """Restores the state copied with _copy()"""
+
+        items, subs = value
+        self.clear()
+        for key, value in items:
+            self[key] = value
+            if key in subs:
+                value.sub_frames._restore(subs[key])
 
 
 def save_frame(frame, name=None, config=None):

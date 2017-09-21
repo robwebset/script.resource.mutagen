@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-
 # Copyright (C) 2005  Michael Urman
 #
 # This program is free software; you can redistribute it and/or modify
-# it under the terms of version 2 of the GNU General Public License as
-# published by the Free Software Foundation.
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
 
 import struct
 import codecs
@@ -12,7 +12,8 @@ from struct import unpack, pack
 
 from .._compat import text_type, chr_, PY3, swap_to_string, string_types, \
     xrange
-from .._util import total_ordering, decode_terminated, enum, izip, flags, cdata
+from .._util import total_ordering, decode_terminated, enum, izip, flags, \
+    cdata, encode_endian
 from ._util import BitPaddedInt, is_valid_frame_id
 
 
@@ -471,15 +472,23 @@ class EncodedTextSpec(Spec):
         err = None
         for data in iter_text_fixups(data, frame.encoding):
             try:
-                return decode_terminated(data, enc, strict=False)
+                value, data = decode_terminated(data, enc, strict=False)
             except ValueError as e:
                 err = e
+            else:
+                # Older id3 did not support multiple values, but we still
+                # read them. To not missinterpret zero padded values with
+                # a list of empty strings, stop if everything left is zero.
+                # https://github.com/quodlibet/mutagen/issues/276
+                if header.version < header._V24 and not data.strip(b"\x00"):
+                    data = b""
+                return value, data
         raise SpecError(err)
 
     def write(self, config, frame, value):
         enc, term = self._encodings[frame.encoding]
         try:
-            return value.encode(enc) + term
+            return encode_endian(value, enc, le=True) + term
         except UnicodeEncodeError as e:
             raise SpecError(e)
 
@@ -807,7 +816,10 @@ class SynchronizedTextSpec(EncodedTextSpec):
         data = []
         encoding, term = self._encodings[frame.encoding]
         for text, time in value:
-            text = text.encode(encoding) + term
+            try:
+                text = encode_endian(text, encoding, le=True) + term
+            except UnicodeEncodeError as e:
+                raise SpecError(e)
             data.append(text + struct.pack(">I", time))
         return b"".join(data)
 

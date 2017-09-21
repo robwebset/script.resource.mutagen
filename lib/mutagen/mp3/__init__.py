@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-
 # Copyright (C) 2006  Joe Wreschnig
 #
 # This program is free software; you can redistribute it and/or modify
-# it under the terms of version 2 of the GNU General Public License as
-# published by the Free Software Foundation.
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
 
 """MPEG audio stream information and tags."""
 
@@ -68,7 +68,7 @@ def _guess_xing_bitrate_mode(xing):
         return BitrateMode.CBR
 
     # older lame and non-lame with some variant of vbr
-    if xing.vbr_scale != -1 or xing.lame_version:
+    if xing.vbr_scale != -1 or xing.lame_version_desc:
         return BitrateMode.VBR
 
     return BitrateMode.UNKNOWN
@@ -183,16 +183,21 @@ class MPEGFrame(object):
             lame = xing.lame_header
             self.sketchy = False
             self.bitrate_mode = _guess_xing_bitrate_mode(xing)
+            self.encoder_settings = xing.get_encoder_settings()
             if xing.frames != -1:
                 samples = frame_size * xing.frames
                 if lame is not None:
                     samples -= lame.encoder_delay_start
                     samples -= lame.encoder_padding_end
+                if samples < 0:
+                    # older lame versions wrote bogus delay/padding for short
+                    # files with low bitrate
+                    samples = 0
                 self.length = float(samples) / self.sample_rate
-            if xing.bytes != -1 and self.length:
-                self.bitrate = int((xing.bytes * 8) / self.length)
-            if xing.lame_version:
-                self.encoder_info = u"LAME %s" % xing.lame_version
+                if xing.bytes != -1 and self.length:
+                    self.bitrate = int((xing.bytes * 8) / self.length)
+            if xing.lame_version_desc:
+                self.encoder_info = u"LAME %s" % xing.lame_version_desc
             if lame is not None:
                 self.track_gain = lame.track_gain_adjustment
                 self.track_peak = lame.track_peak
@@ -298,6 +303,9 @@ class MPEGInfo(StreamInfo):
             possibly version. In case a lame tag is present this will start
             with ``"LAME "``, if unknown it is empty, otherwise the
             text format is undefined.
+        encoder_settings (`mutagen.text`): a string containing a guess about
+            the settings used for encoding. The format is undefined and
+            depends on the encoder.
         bitrate_mode (`BitrateMode`): a :class:`BitrateMode`
         track_gain (`float` or `None`): replaygain track gain (89db) or None
         track_peak (`float` or `None`): replaygain track peak or None
@@ -316,6 +324,7 @@ class MPEGInfo(StreamInfo):
 
     sketchy = False
     encoder_info = u""
+    encoder_settings = u""
     bitrate_mode = BitrateMode.UNKNOWN
     track_gain = track_peak = album_gain = album_peak = None
 
@@ -405,6 +414,8 @@ class MPEGInfo(StreamInfo):
             info = u"CBR?"
         if self.encoder_info:
             info += ", %s" % self.encoder_info
+        if self.encoder_settings:
+            info += ", %s" % self.encoder_settings
         s = u"MPEG %s layer %d, %d bps (%s), %s Hz, %d chn, %.2f seconds" % (
             self.version, self.layer, self.bitrate, info,
             self.sample_rate, self.channels, self.length)
